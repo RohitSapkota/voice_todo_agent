@@ -1,6 +1,4 @@
 .env
 node_modules
-.vscode/
 
-# Added by cargo
-src/backend/target
+src/main
