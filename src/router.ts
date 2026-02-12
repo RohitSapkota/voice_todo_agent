@@ -1,9 +1,4 @@
 import { renderAppPage } from "./ui/page.tsx";
-import type { TranscribeAudio } from "./transcription.ts";
-
-interface AppDependencies {
-  transcribeAudio: TranscribeAudio;
-}
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -12,8 +7,10 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-export function createFetchHandler({ transcribeAudio }: AppDependencies) {
-  return async function fetch(request: Request): Promise<Response> {
+export function createFetchHandler() {
+  const backendUrl = process.env.BACKEND_URL ?? "http://localhost:8000";
+
+  return async function handleRequest(request: Request): Promise<Response> {
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/") {
@@ -22,17 +19,38 @@ export function createFetchHandler({ transcribeAudio }: AppDependencies) {
       });
     }
 
-    if (request.method === "POST" && url.pathname === "/transcribe") {
+    if (request.method === "POST" && url.pathname === "/text") {
       try {
-        const body = await request.arrayBuffer();
-        if (body.byteLength === 0) {
-          return json({ error: "No audio data received." }, 400);
+        const rawBody = await request.json().catch(() => null);
+        const text =
+          rawBody &&
+          typeof rawBody === "object" &&
+          "text" in rawBody &&
+          typeof rawBody.text === "string"
+            ? rawBody.text.trim()
+            : "";
+
+        if (!text) {
+          return json({ error: "Missing text." }, 400);
         }
 
-        const mimeType = request.headers.get("x-audio-mime") || "audio/webm";
-        const text = await transcribeAudio(body, mimeType);
+        const backendResponse = await fetch(`${backendUrl}/text`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json; charset=utf-8" },
+          body: JSON.stringify({ text }),
+        });
 
-        return json({ text });
+        if (!backendResponse.ok) {
+          const backendError = await backendResponse.text();
+          return json(
+            {
+              error: backendError || "Backend request failed.",
+            },
+            backendResponse.status,
+          );
+        }
+
+        return json({ ok: true });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown error";
         return json({ error: message }, 500);
