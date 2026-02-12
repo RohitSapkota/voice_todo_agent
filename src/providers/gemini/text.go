@@ -12,19 +12,20 @@ import (
 func TextToText(input string) {
 	ctx := context.Background()
 
-	apiKey, isavail := os.LookupEnv("GEMINI_API_KEY")
-	if !isavail {
-		log.Fatal("API key not found")
-	} else {
-		fmt.Printf("API Key Set \n")
+	apiKey, ok := os.LookupEnv("GEMINI_API_KEY")
+	if !ok || apiKey == "" {
+		log.Println("GEMINI_API_KEY is not set")
+		return
 	}
+	fmt.Println("API key set")
 
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
 		APIKey:  apiKey,
 		Backend: genai.BackendGeminiAPI,
 	})
 	if err != nil {
-		log.Fatal(err)
+		log.Printf("failed to create Gemini client: %v", err)
+		return
 	}
 
 	stream := client.Models.GenerateContentStream(
@@ -34,8 +35,18 @@ func TextToText(input string) {
 		nil,
 	)
 
-	for chunk := range stream {
-		part := chunk.Candidates[0].Content.Parts[0]
-		fmt.Print(part.Text)
+	for chunk, err := range stream {
+		if err != nil {
+			log.Printf("stream error: %v", err)
+			continue
+		}
+		if chunk == nil {
+			continue
+		}
+		text := chunk.Text()
+		if text == "" {
+			continue
+		}
+		fmt.Print(text)
 	}
 }
