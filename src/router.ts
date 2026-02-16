@@ -12,6 +12,7 @@ export function createFetchHandler() {
 
   return async function handleRequest(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    const isAudioEndpoint = url.pathname === "/audio";
 
     if (request.method === "GET" && url.pathname === "/") {
       return new Response(renderAppPage(), {
@@ -19,7 +20,11 @@ export function createFetchHandler() {
       });
     }
 
-    if (request.method === "POST" && url.pathname === "/text") {
+    if (isAudioEndpoint && request.method !== "POST") {
+      return json({ error: "Method not allowed. Use POST." }, 405);
+    }
+
+    if (request.method === "POST" && isAudioEndpoint) {
       try {
         const rawBody = await request.json().catch(() => null);
         const text =
@@ -34,31 +39,28 @@ export function createFetchHandler() {
           return json({ error: "Missing text." }, 400);
         }
 
-        const backendResponse = await fetch(`${backendUrl}/text`, {
+        const backendResponse = await fetch(`${backendUrl}/audio`, {
           method: "POST",
           headers: { "Content-Type": "application/json; charset=utf-8" },
           body: JSON.stringify({ text }),
         });
+        const backendBody = await backendResponse.text();
+        const backendContentType =
+          backendResponse.headers.get("content-type") ||
+          "application/json; charset=utf-8";
 
-        if (!backendResponse.ok) {
-          const backendError = await backendResponse.text();
-          return json(
-            {
-              error: backendError || "Backend request failed.",
-            },
-            backendResponse.status,
-          );
+        if (!backendBody && !backendResponse.ok) {
+          return json({ error: "Backend request failed." }, backendResponse.status);
         }
 
-        return json({ ok: true });
+        return new Response(backendBody, {
+          status: backendResponse.status,
+          headers: { "Content-Type": backendContentType },
+        });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown error";
         return json({ error: message }, 500);
       }
-    }
-
-    if (request.method === "GET" && url.pathname === "/health") {
-      return json({ ok: true });
     }
 
     return new Response("Not found", { status: 404 });

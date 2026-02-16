@@ -3,50 +3,62 @@ package gemini
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
+	"strings"
+	"sync"
 
 	"google.golang.org/genai"
 )
 
-func TextToText(input string) {
+var (
+	historyMu sync.Mutex
+	history   []*genai.Content
+)
+
+func TextToText(input string) (string, error) {
 	ctx := context.Background()
 
-	apiKey, ok := os.LookupEnv("GEMINI_API_KEY")
-	if !ok || apiKey == "" {
-		log.Println("GEMINI_API_KEY is not set")
-		return
+	apiKey := strings.TrimSpace(os.Getenv("GEMINI_API_KEY"))
+	if apiKey == "" {
+		return "", fmt.Errorf("GEMINI_API_KEY is not set")
 	}
-	fmt.Println("API key set")
 
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
 		APIKey:  apiKey,
 		Backend: genai.BackendGeminiAPI,
 	})
 	if err != nil {
-		log.Printf("failed to create Gemini client: %v", err)
-		return
+		return "", fmt.Errorf("failed to create Gemini client: %w", err)
 	}
 
-	stream := client.Models.GenerateContentStream(
+	userInput := genai.NewContentFromText(input, genai.RoleUser)
+
+	// Keep history consistent per request so each turn includes previous turns.
+	historyMu.Lock()
+	defer historyMu.Unlock()
+
+	contents := append(append([]*genai.Content{}, history...), userInput)
+
+	config := &genai.GenerateContentConfig{
+		SystemInstruction: &genai.Content{
+			Parts: []*genai.Part{{Text: "You are a helpful personal assistant who remember TODO items."}},
+		},
+	}
+	
+	result, err := client.Models.GenerateContent(
 		ctx,
 		"gemini-3-flash-preview",
-		genai.Text(input),
-		nil,
+		contents,
+		config,
 	)
-
-	for chunk, err := range stream {
-		if err != nil {
-			log.Printf("stream error: %v", err)
-			continue
-		}
-		if chunk == nil {
-			continue
-		}
-		text := chunk.Text()
-		if text == "" {
-			continue
-		}
-		fmt.Print(text)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate content: %w", err)
 	}
+
+	responseText := strings.TrimSpace(result.Text())
+	if responseText != "" {
+		history = append(history, userInput, genai.NewContentFromText(responseText, genai.RoleModel))
+	}
+
+	return responseText, nil
 }
